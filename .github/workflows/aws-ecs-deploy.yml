@@ -182,46 +182,106 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Check ECR repository configuration
+        run: |
+          echo "=== ECR Repository Information ==="
+          aws ecr describe-repositories \
+            --repository-names $ECR_REPOSITORY \
+            --region $AWS_REGION \
+            --query 'repositories[0].{Name:repositoryName,ImageTagMutability:imageTagMutability,RepositoryUri:repositoryUri}' \
+            --output table
+
+          echo ""
+          echo "Current images in repository:"
+          aws ecr list-images \
+            --repository-name $ECR_REPOSITORY \
+            --region $AWS_REGION \
+            --query 'imageIds[*].imageTag' \
+            --output table || echo "No existing images found"
+
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         run: |
-          # Build a docker container with latest tag
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+          # Create unique tag using timestamp and commit SHA
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          COMMIT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          UNIQUE_TAG="${ENV_NAME}-${TIMESTAMP}-${COMMIT_SHA}"
+
+          echo "Building image with unique tag: $UNIQUE_TAG"
+
+          # Build docker container with unique tag
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$UNIQUE_TAG \
             --build-arg SPRING_PROFILES_ACTIVE=$ENV_NAME \
             .
 
-          # Push only the latest tag
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          # Also tag as latest for local reference
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$UNIQUE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+          # Push the unique tag (this will always work with immutable repos)
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$UNIQUE_TAG
 
-      - name: Clean up old ECR images (keep only latest)
+          # Try to push latest, but don't fail if it already exists
+          echo "Attempting to push latest tag (may fail if immutable)..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest || echo "Latest tag push failed (likely immutable repo) - continuing with unique tag"
+
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$UNIQUE_TAG" >> $GITHUB_OUTPUT
+          echo "unique_tag=$UNIQUE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Clean up old ECR images (keep latest 5 per environment)
         run: |
-          # List all images except the latest one
-          OLD_IMAGES=$(aws ecr list-images --repository-name $ECR_REPOSITORY --region $AWS_REGION \
-            --filter tagStatus=TAGGED \
-            --query 'imageIds[?imageTag!=`latest`]' \
-            --output json)
+          echo "Cleaning up old ECR images for environment: $ENV_NAME"
 
-          # Delete old images if any exist
-          if [ "$OLD_IMAGES" != "[]" ] && [ "$OLD_IMAGES" != "null" ]; then
-            echo "Deleting old images..."
-            aws ecr batch-delete-image --repository-name $ECR_REPOSITORY --region $AWS_REGION --image-ids "$OLD_IMAGES" || true
-            echo "Old images cleaned up"
+          # List all images for this environment, sorted by creation date (newest first)
+          OLD_IMAGES=$(aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --region $AWS_REGION \
+            --query "sort_by(imageDetails[?contains(imageTags[0], '$ENV_NAME')], &imageLastPushedAt) | reverse(@) | [5:].[imageDigest]" \
+            --output text)
+
+          if [ ! -z "$OLD_IMAGES" ] && [ "$OLD_IMAGES" != "None" ]; then
+            echo "Found old images to delete:"
+            echo "$OLD_IMAGES"
+            
+            # Convert to JSON format for batch delete
+            IMAGE_IDS=""
+            for digest in $OLD_IMAGES; do
+              if [ -z "$IMAGE_IDS" ]; then
+                IMAGE_IDS="{\"imageDigest\":\"$digest\"}"
+              else
+                IMAGE_IDS="$IMAGE_IDS,{\"imageDigest\":\"$digest\"}"
+              fi
+            done
+            
+            if [ ! -z "$IMAGE_IDS" ]; then
+              echo "[$IMAGE_IDS]" > /tmp/images_to_delete.json
+              echo "Deleting old images..."
+              aws ecr batch-delete-image \
+                --repository-name $ECR_REPOSITORY \
+                --region $AWS_REGION \
+                --image-ids file:///tmp/images_to_delete.json || true
+              echo "✅ Old images cleaned up"
+            fi
           else
             echo "No old images to clean up"
           fi
 
       - name: Update task definition with new image
         run: |
+          echo "=== Task Definition Update ==="
+          echo "Environment: $ENV_NAME"
+          echo "Image URI: ${{ steps.build-image.outputs.image }}"
+          echo "Unique Tag: ${{ steps.build-image.outputs.unique_tag }}"
+          echo ""
+
           # Replace the placeholder with the actual image URI
           sed -i "s|PLACEHOLDER_IMAGE_URI|${{ steps.build-image.outputs.image }}|g" ${{ env.TASK_DEFINITION }}
 
-          echo "Updated task definition with image: ${{ steps.build-image.outputs.image }}"
-          echo "Task definition contents:"
+          echo "✅ Updated task definition with image: ${{ steps.build-image.outputs.image }}"
+          echo ""
+          echo "=== Task Definition Contents ==="
           cat ${{ env.TASK_DEFINITION }}
           echo ""
-          echo "Validating JSON format..."
+          echo "=== JSON Validation ==="
           jq empty ${{ env.TASK_DEFINITION }} && echo "✅ Valid JSON" || echo "❌ Invalid JSON"
 
       - name: Deploy Amazon ECS task definition with retry logic
