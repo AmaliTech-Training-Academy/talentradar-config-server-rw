@@ -1,0 +1,226 @@
+# TalentRadar Config Server - AWS ECS Deployment Workflow
+# This workflow builds and deploys the Config Server to Amazon ECS when there's a merge to development, staging, or production branches
+
+name: Deploy Config Server to AWS ECS
+
+on:
+  push:
+    branches: [ "development", "staging", "production" ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+permissions:
+  contents: read
+  id-token: write # Required for requesting the JWT
+
+jobs:
+  set-environment:
+    name: Set Environment Variables
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.set-env.outputs.env_name }}
+      aws_region: ${{ steps.set-env.outputs.aws_region }}
+      ecr_repository: ${{ steps.set-env.outputs.ecr_repository }}
+      ecr_registry: ${{ steps.set-env.outputs.ecr_registry }}
+      ecs_service: ${{ steps.set-env.outputs.ecs_service }}
+      ecs_cluster: ${{ steps.set-env.outputs.ecs_cluster }}
+      task_definition: ${{ steps.set-env.outputs.task_definition }}
+      container_name: ${{ steps.set-env.outputs.container_name }}
+    
+    steps:
+      - name: Determine environment
+        id: set-env
+        run: |
+          # Determine environment based on branch or manual input
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV_NAME="${{ github.event.inputs.environment }}"
+          else
+            if [ "${{ github.ref }}" == "refs/heads/development" ]; then
+              ENV_NAME="development"
+            elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
+              ENV_NAME="staging"
+            elif [ "${{ github.ref }}" == "refs/heads/production" ]; then
+              ENV_NAME="production"
+            else
+              ENV_NAME="development"  # Default
+            fi
+          fi
+          
+          # Set common variables based on AWS infrastructure inspection
+          AWS_REGION="eu-west-1"
+          ECR_REPOSITORY="talentradar/config-server"
+          ECR_REGISTRY="323135480621.dkr.ecr.eu-west-1.amazonaws.com"
+          CONTAINER_NAME="config-server"
+          
+          # Based on AWS infrastructure inspection, we only have a single cluster and service
+          ECS_CLUSTER="TalentRadar-Cluster"
+          ECS_SERVICE="TalentRadar-config-server"
+          
+          # Create task definition directory if it doesn't exist
+          mkdir -p .aws
+          
+          # Generate task definition based on environment
+          cat > .aws/task-definition-${ENV_NAME}.json << EOL
+{
+  "family": "TalentRadar-config-server",
+  "executionRoleArn": "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskRole",
+  "networkMode": "awsvpc",
+  "containerDefinitions": [
+    {
+      "name": "config-server",
+      "image": "${ECR_REGISTRY}/${ECR_REPOSITORY}:${ENV_NAME}-latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8085,
+          "hostPort": 8085,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SPRING_PROFILES_ACTIVE",
+          "value": "${ENV_NAME}"
+        },
+        {
+          "name": "PORT",
+          "value": "8085"
+        },
+        {
+          "name": "SERVICE_NAME",
+          "value": "config-server"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/ecs/talentradar",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8085/actuator/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512"
+}
+EOL
+          
+          # Output all variables
+          echo "env_name=${ENV_NAME}" >> $GITHUB_OUTPUT
+          echo "aws_region=${AWS_REGION}" >> $GITHUB_OUTPUT
+          echo "ecr_repository=${ECR_REPOSITORY}" >> $GITHUB_OUTPUT
+          echo "ecr_registry=${ECR_REGISTRY}" >> $GITHUB_OUTPUT
+          echo "ecs_service=${ECS_SERVICE}" >> $GITHUB_OUTPUT
+          echo "ecs_cluster=${ECS_CLUSTER}" >> $GITHUB_OUTPUT
+          echo "task_definition=.aws/task-definition-${ENV_NAME}.json" >> $GITHUB_OUTPUT
+          echo "container_name=${CONTAINER_NAME}" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: set-environment
+    environment: ${{ needs.set-environment.outputs.env_name }}
+    env:
+      AWS_REGION: ${{ needs.set-environment.outputs.aws_region }}
+      ECR_REPOSITORY: ${{ needs.set-environment.outputs.ecr_repository }}
+      ECR_REGISTRY: ${{ needs.set-environment.outputs.ecr_registry }}
+      ECS_SERVICE: ${{ needs.set-environment.outputs.ecs_service }}
+      ECS_CLUSTER: ${{ needs.set-environment.outputs.ecs_cluster }}
+      TASK_DEFINITION: ${{ needs.set-environment.outputs.task_definition }}
+      CONTAINER_NAME: ${{ needs.set-environment.outputs.container_name }}
+      ENV_NAME: ${{ needs.set-environment.outputs.env_name }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v3
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Build with Maven
+      run: |
+        chmod +x ./mvnw
+        ./mvnw clean package -DskipTests
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Build a docker container and push it to ECR
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          --build-arg SPRING_PROFILES_ACTIVE=$ENV_NAME \
+          .
+        
+        # Tag with environment name and latest
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$ENV_NAME-latest
+        
+        # Push all tags
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$ENV_NAME-latest
+        
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Fill in the new image ID in the Amazon ECS task definition
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: ${{ env.TASK_DEFINITION }}
+        container-name: ${{ env.CONTAINER_NAME }}
+        image: ${{ steps.build-image.outputs.image }}
+
+    - name: Deploy Amazon ECS task definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
+        
+    - name: Post-deployment verification
+      run: |
+        echo "Waiting for deployment to stabilize..."
+        sleep 30
+        
+        # Check service status
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION
+        
+        echo "Deployment completed for $ENV_NAME environment"
