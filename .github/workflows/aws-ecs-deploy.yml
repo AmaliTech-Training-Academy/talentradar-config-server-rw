@@ -219,13 +219,54 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
+      - name: Debug task definition
+        run: |
+          echo "Task definition file contents:"
+          cat ${{ steps.task-def.outputs.task-definition }}
+          echo ""
+          echo "Validating JSON format..."
+          jq empty ${{ steps.task-def.outputs.task-definition }} && echo "✅ Valid JSON" || echo "❌ Invalid JSON"
+
       - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+        continue-on-error: true
+        id: deploy-attempt-1
+
+      - name: Retry ECS deployment if first attempt failed
+        if: steps.deploy-attempt-1.outcome == 'failure'
+        run: |
+          echo "First deployment attempt failed, retrying in 30 seconds..."
+          sleep 30
+
+          # Manual deployment using AWS CLI as fallback
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ env.TASK_DEFINITION }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "Registered task definition: $TASK_DEF_ARN"
+
+          # Update the service
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition $TASK_DEF_ARN \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Service update initiated"
+
+          # Wait for deployment to complete
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
 
       - name: Post-deployment verification
         run: |
