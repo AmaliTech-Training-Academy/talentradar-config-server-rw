@@ -60,7 +60,7 @@ jobs:
           ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY }}"
           ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
           CONTAINER_NAME="${{ secrets.CONTAINER_NAME }}"
-          
+
           # ECS Configuration from secrets
           ECS_CLUSTER="${{ secrets.ECS_CLUSTER }}"
           ECS_SERVICE="${{ secrets.ECS_SERVICE }}"          # Create task definition directory if it doesn't exist
