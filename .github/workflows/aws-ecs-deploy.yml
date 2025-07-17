@@ -230,42 +230,53 @@ jobs:
       - name: Clean up old ECR images (keep latest 5 per environment)
         run: |
           echo "Cleaning up old ECR images for environment: $ENV_NAME"
-
-          # List all images for this environment, sorted by creation date (newest first)
-          OLD_IMAGES=$(aws ecr describe-images \
+          
+          # Get all images for this environment using a simpler approach
+          echo "Fetching images for environment: $ENV_NAME"
+          
+          # First, get all image tags that match our environment pattern
+          ENV_TAGS=$(aws ecr list-images \
             --repository-name $ECR_REPOSITORY \
             --region $AWS_REGION \
-            --query "sort_by(imageDetails[?contains(imageTags[0], '$ENV_NAME')], &imageLastPushedAt) | reverse(@) | [5:].[imageDigest]" \
+            --query "imageIds[?starts_with(imageTag, '$ENV_NAME-')].imageTag" \
             --output text)
-
-          if [ ! -z "$OLD_IMAGES" ] && [ "$OLD_IMAGES" != "None" ]; then
-            echo "Found old images to delete:"
-            echo "$OLD_IMAGES"
-            
-            # Convert to JSON format for batch delete
-            IMAGE_IDS=""
-            for digest in $OLD_IMAGES; do
-              if [ -z "$IMAGE_IDS" ]; then
-                IMAGE_IDS="{\"imageDigest\":\"$digest\"}"
-              else
-                IMAGE_IDS="$IMAGE_IDS,{\"imageDigest\":\"$digest\"}"
-              fi
-            done
-            
-            if [ ! -z "$IMAGE_IDS" ]; then
-              echo "[$IMAGE_IDS]" > /tmp/images_to_delete.json
-              echo "Deleting old images..."
-              aws ecr batch-delete-image \
-                --repository-name $ECR_REPOSITORY \
-                --region $AWS_REGION \
-                --image-ids file:///tmp/images_to_delete.json || true
-              echo "✅ Old images cleaned up"
-            fi
+          
+          if [ -z "$ENV_TAGS" ] || [ "$ENV_TAGS" = "None" ]; then
+            echo "No images found for environment: $ENV_NAME"
           else
-            echo "No old images to clean up"
-          fi
-
-      - name: Update task definition with new image
+            echo "Found images for environment $ENV_NAME:"
+            echo "$ENV_TAGS"
+            
+            # Count how many images we have
+            IMAGE_COUNT=$(echo "$ENV_TAGS" | wc -w)
+            echo "Total images for $ENV_NAME: $IMAGE_COUNT"
+            
+            # If we have more than 5 images, delete the oldest ones
+            if [ "$IMAGE_COUNT" -gt 5 ]; then
+              echo "Need to clean up $(($IMAGE_COUNT - 5)) old images"
+              
+              # Sort tags by timestamp (they include timestamp in format YYYYMMDD-HHMMSS)
+              # Keep only the 5 newest, delete the rest
+              TAGS_TO_DELETE=$(echo "$ENV_TAGS" | tr ' ' '\n' | sort | head -n $(($IMAGE_COUNT - 5)))
+              
+              if [ ! -z "$TAGS_TO_DELETE" ]; then
+                echo "Tags to delete:"
+                echo "$TAGS_TO_DELETE"
+                
+                # Delete each tag
+                for tag in $TAGS_TO_DELETE; do
+                  echo "Deleting image with tag: $tag"
+                  aws ecr batch-delete-image \
+                    --repository-name $ECR_REPOSITORY \
+                    --region $AWS_REGION \
+                    --image-ids imageTag=$tag || echo "Failed to delete $tag (continuing...)"
+                done
+                echo "✅ Cleanup completed"
+              fi
+            else
+              echo "Only $IMAGE_COUNT images found, no cleanup needed (keeping up to 5)"
+            fi
+          fi      - name: Update task definition with new image
         run: |
           echo "=== Task Definition Update ==="
           echo "Environment: $ENV_NAME"
