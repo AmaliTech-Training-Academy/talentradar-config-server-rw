@@ -74,7 +74,7 @@ jobs:
             --arg execution_role "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskExecutionRole" \
             --arg task_role "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskRole" \
             --arg container_name "config-server" \
-            --arg image "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            --arg image_placeholder "PLACEHOLDER_IMAGE_URI" \
             --arg env_name "${ENV_NAME}" \
             --arg aws_region "${AWS_REGION}" \
             '{
@@ -89,7 +89,7 @@ jobs:
               containerDefinitions: [
                 {
                   name: $container_name,
-                  image: $image,
+                  image: $image_placeholder,
                   essential: true,
                   portMappings: [
                     {
@@ -176,6 +176,7 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
+          retry-max-attempts: 3
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -211,62 +212,100 @@ jobs:
             echo "No old images to clean up"
           fi
 
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: ${{ env.TASK_DEFINITION }}
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Debug task definition
+      - name: Update task definition with new image
         run: |
-          echo "Task definition file contents:"
-          cat ${{ steps.task-def.outputs.task-definition }}
+          # Replace the placeholder with the actual image URI
+          sed -i "s|PLACEHOLDER_IMAGE_URI|${{ steps.build-image.outputs.image }}|g" ${{ env.TASK_DEFINITION }}
+
+          echo "Updated task definition with image: ${{ steps.build-image.outputs.image }}"
+          echo "Task definition contents:"
+          cat ${{ env.TASK_DEFINITION }}
           echo ""
           echo "Validating JSON format..."
-          jq empty ${{ steps.task-def.outputs.task-definition }} && echo "✅ Valid JSON" || echo "❌ Invalid JSON"
+          jq empty ${{ env.TASK_DEFINITION }} && echo "✅ Valid JSON" || echo "❌ Invalid JSON"
 
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      - name: Deploy Amazon ECS task definition with retry logic
+        id: deploy-ecs
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          task-definition: ${{ env.TASK_DEFINITION }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+          wait-for-minutes: 10
+          force-new-deployment: false
+        env:
+          AWS_RETRY_MODE: adaptive
+          AWS_MAX_ATTEMPTS: 3
         continue-on-error: true
-        id: deploy-attempt-1
 
-      - name: Retry ECS deployment if first attempt failed
-        if: steps.deploy-attempt-1.outcome == 'failure'
+      - name: Fallback deployment using AWS CLI (if GitHub Action fails)
+        if: steps.deploy-ecs.outcome == 'failure'
         run: |
-          echo "First deployment attempt failed, retrying in 30 seconds..."
+          echo "GitHub Action deployment failed, falling back to AWS CLI..."
+          echo "Waiting 30 seconds before retry..."
           sleep 30
 
-          # Manual deployment using AWS CLI as fallback
+          # Register the task definition directly using the updated file
+          echo "Registering task definition..."
           TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://${{ env.TASK_DEFINITION }} \
             --region ${{ env.AWS_REGION }} \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
-          echo "Registered task definition: $TASK_DEF_ARN"
+          if [ -z "$TASK_DEF_ARN" ]; then
+            echo "❌ Failed to register task definition"
+            exit 1
+          fi
 
-          # Update the service
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition $TASK_DEF_ARN \
-            --region ${{ env.AWS_REGION }}
+          echo "✅ Registered task definition: $TASK_DEF_ARN"
 
-          echo "Service update initiated"
+          # Update the service with retry logic
+          for attempt in 1 2 3; do
+            echo "Attempting service update (attempt $attempt/3)..."
+            
+            if aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service ${{ env.ECS_SERVICE }} \
+              --task-definition "$TASK_DEF_ARN" \
+              --region ${{ env.AWS_REGION }}; then
+              
+              echo "✅ Service update successful"
+              break
+            else
+              echo "❌ Service update failed (attempt $attempt/3)"
+              if [ $attempt -eq 3 ]; then
+                echo "All attempts failed"
+                exit 1
+              fi
+              echo "Waiting 60 seconds before retry..."
+              sleep 60
+            fi
+          done
 
-          # Wait for deployment to complete
+          # Wait for deployment to stabilize
           echo "Waiting for service to stabilize..."
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ env.ECS_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
+            --region ${{ env.AWS_REGION }} \
+            --cli-read-timeout 600 \
+            --cli-connect-timeout 60
+
+          echo "✅ Deployment completed successfully using AWS CLI fallback"
+
+      - name: Verify deployment success
+        run: |
+          # Final verification
+          if [ "${{ steps.deploy-ecs.outcome }}" = "success" ]; then
+            echo "✅ Deployment completed successfully using GitHub Actions"
+          elif [ "${{ steps.deploy-ecs.outcome }}" = "failure" ]; then
+            echo "✅ Deployment completed successfully using AWS CLI fallback"
+          else
+            echo "❌ Deployment status unknown"
+            exit 1
+          fi
 
       - name: Post-deployment verification
         run: |
