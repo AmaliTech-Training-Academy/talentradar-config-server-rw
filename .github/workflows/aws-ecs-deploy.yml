@@ -55,17 +55,15 @@ jobs:
             fi
           fi
 
-          # Set common variables based on AWS infrastructure inspection
-          AWS_REGION="eu-west-1"
-          ECR_REPOSITORY="talentradar/config-server"
-          ECR_REGISTRY="323135480621.dkr.ecr.eu-west-1.amazonaws.com"
-          CONTAINER_NAME="config-server"
-
-          # Based on AWS infrastructure inspection, we only have a single cluster and service
-          ECS_CLUSTER="TalentRadar-Cluster"
-          ECS_SERVICE="TalentRadar-config-server"
-
-          # Create task definition directory if it doesn't exist
+          # Set common variables from GitHub secrets
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+          ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY }}"
+          ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          CONTAINER_NAME="${{ secrets.CONTAINER_NAME }}"
+          
+          # ECS Configuration from secrets
+          ECS_CLUSTER="${{ secrets.ECS_CLUSTER }}"
+          ECS_SERVICE="${{ secrets.ECS_SERVICE }}"          # Create task definition directory if it doesn't exist
           mkdir -p .aws
 
           # Create task definition file using jq for proper JSON handling
