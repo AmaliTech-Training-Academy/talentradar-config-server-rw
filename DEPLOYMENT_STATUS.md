@@ -3,21 +3,25 @@
 ## Issues Resolved ✅
 
 ### 1. **YAML Formatting Error**
+
 - **Problem**: Missing newline and improper indentation on line 279 caused YAML parsing to fail
 - **Fix**: Added proper line breaks and indentation between the cleanup step and the next step
 - **Result**: Workflow can now be parsed and executed by GitHub Actions
 
 ### 2. **ECR Tag Immutability**
+
 - **Problem**: `latest` tag conflicts with immutable ECR repositories
 - **Fix**: Implemented unique tagging strategy using `{environment}-{timestamp}-{commit-sha}`
 - **Result**: No more tag conflicts, deployments work with both mutable and immutable repos
 
 ### 3. **ECR Cleanup JMESPath Error**
+
 - **Problem**: `sort_by()` function failing on null `imageLastPushedAt` values
 - **Fix**: Replaced complex JMESPath query with simple tag-based sorting
 - **Result**: Cleanup works reliably without encountering null value errors
 
 ### 4. **GitHub Actions Versions**
+
 - **Problem**: Using outdated v1 actions with known stability issues
 - **Fix**: Updated to latest stable v2 versions with enhanced retry mechanisms
 - **Result**: More reliable deployments with better error handling
@@ -25,6 +29,7 @@
 ## What Was Committed 📝
 
 1. **Updated Workflow** (`.github/workflows/aws-ecs-deploy.yml`)
+
    - Latest GitHub Actions versions
    - Unique tagging strategy
    - Fixed ECR cleanup logic
@@ -32,6 +37,7 @@
    - AWS CLI fallback deployment
 
 2. **Documentation** (`DEPLOYMENT_IMPROVEMENTS.md`)
+
    - Comprehensive explanation of all improvements
    - Troubleshooting guide
    - Usage instructions
@@ -44,11 +50,13 @@
 ## Expected Behavior Now 🚀
 
 ### Immediate Effect
+
 - ✅ **Workflow will start**: YAML formatting is now correct
 - ✅ **No tag conflicts**: Unique tags prevent ECR immutability errors
 - ✅ **Reliable cleanup**: Fixed JMESPath query handles all scenarios
 
 ### Deployment Flow
+
 ```
 1. Push to development branch (✅ DONE)
    ↓
@@ -84,11 +92,13 @@
 ## If Issues Persist 🔧
 
 ### Possible Causes:
+
 1. **GitHub Secrets**: Ensure all AWS credentials are properly configured
 2. **AWS Permissions**: Verify ECS/ECR permissions for the IAM user
 3. **Network Issues**: Temporary AWS service unavailability
 
 ### Debugging Steps:
+
 1. Check GitHub Actions logs for specific error messages
 2. Verify AWS credentials haven't expired
 3. Confirm ECR repository exists and is accessible
