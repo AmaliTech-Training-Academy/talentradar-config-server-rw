@@ -74,7 +74,7 @@ jobs:
             --arg execution_role "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskExecutionRole" \
             --arg task_role "arn:aws:iam::323135480621:role/TalentRadar-ECSTaskRole" \
             --arg container_name "config-server" \
-            --arg image "${ECR_REGISTRY}/${ECR_REPOSITORY}:${ENV_NAME}-latest" \
+            --arg image "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
             --arg env_name "${ENV_NAME}" \
             --arg aws_region "${AWS_REGION}" \
             '{
@@ -183,22 +183,33 @@ jobs:
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
-        env:
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build a docker container and push it to ECR
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          # Build a docker container with latest tag
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --build-arg SPRING_PROFILES_ACTIVE=$ENV_NAME \
             .
 
-          # Tag with environment name and latest
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$ENV_NAME-latest
+          # Push only the latest tag
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-          # Push all tags
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$ENV_NAME-latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
 
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      - name: Clean up old ECR images (keep only latest)
+        run: |
+          # List all images except the latest one
+          OLD_IMAGES=$(aws ecr list-images --repository-name $ECR_REPOSITORY --region $AWS_REGION \
+            --filter tagStatus=TAGGED \
+            --query 'imageIds[?imageTag!=`latest`]' \
+            --output json)
+
+          # Delete old images if any exist
+          if [ "$OLD_IMAGES" != "[]" ] && [ "$OLD_IMAGES" != "null" ]; then
+            echo "Deleting old images..."
+            aws ecr batch-delete-image --repository-name $ECR_REPOSITORY --region $AWS_REGION --image-ids "$OLD_IMAGES" || true
+            echo "Old images cleaned up"
+          else
+            echo "No old images to clean up"
+          fi
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
