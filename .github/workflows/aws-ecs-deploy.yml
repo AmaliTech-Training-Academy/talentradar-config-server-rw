@@ -60,10 +60,12 @@ jobs:
           ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY }}"
           ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
           CONTAINER_NAME="${{ secrets.CONTAINER_NAME }}"
-
+          
           # ECS Configuration from secrets
           ECS_CLUSTER="${{ secrets.ECS_CLUSTER }}"
-          ECS_SERVICE="${{ secrets.ECS_SERVICE }}"          # Create task definition directory if it doesn't exist
+          ECS_SERVICE="${{ secrets.ECS_SERVICE }}"
+          
+          # Create task definition directory if it doesn't exist
           mkdir -p .aws
 
           # Create task definition file using jq for proper JSON handling
@@ -147,13 +149,13 @@ jobs:
     needs: set-environment
     environment: ${{ needs.set-environment.outputs.env_name }}
     env:
-      AWS_REGION: ${{ needs.set-environment.outputs.aws_region }}
-      ECR_REPOSITORY: ${{ needs.set-environment.outputs.ecr_repository }}
-      ECR_REGISTRY: ${{ needs.set-environment.outputs.ecr_registry }}
-      ECS_SERVICE: ${{ needs.set-environment.outputs.ecs_service }}
-      ECS_CLUSTER: ${{ needs.set-environment.outputs.ecs_cluster }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+      ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+      ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
       TASK_DEFINITION: ${{ needs.set-environment.outputs.task_definition }}
-      CONTAINER_NAME: ${{ needs.set-environment.outputs.container_name }}
+      CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
       ENV_NAME: ${{ needs.set-environment.outputs.env_name }}
 
     steps:
@@ -165,7 +167,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr
