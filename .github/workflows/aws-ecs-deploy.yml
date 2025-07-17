@@ -276,7 +276,9 @@ jobs:
             else
               echo "Only $IMAGE_COUNT images found, no cleanup needed (keeping up to 5)"
             fi
-          fi      - name: Update task definition with new image
+          fi
+
+      - name: Update task definition with new image
         run: |
           echo "=== Task Definition Update ==="
           echo "Environment: $ENV_NAME"
