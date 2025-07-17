@@ -17,5 +17,4 @@ COPY --from=builder /builder/extracted/snapshot-dependencies/ ./
 COPY --from=builder /builder/extracted/application/ ./
 
 EXPOSE 8085
-
 ENTRYPOINT ["java", "-jar", "application.jar"]
