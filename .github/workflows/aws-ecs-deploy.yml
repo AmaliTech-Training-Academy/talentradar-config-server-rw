@@ -230,17 +230,17 @@ jobs:
       - name: Clean up old ECR images (keep latest 5 per environment)
         run: |
           echo "Cleaning up old ECR images for environment: $ENV_NAME"
-          
+
           # Get all images for this environment using a simpler approach
           echo "Fetching images for environment: $ENV_NAME"
-          
+
           # First, get all image tags that match our environment pattern
           ENV_TAGS=$(aws ecr list-images \
             --repository-name $ECR_REPOSITORY \
             --region $AWS_REGION \
             --query "imageIds[?starts_with(imageTag, '$ENV_NAME-')].imageTag" \
             --output text)
-          
+
           if [ -z "$ENV_TAGS" ] || [ "$ENV_TAGS" = "None" ]; then
             echo "No images found for environment: $ENV_NAME"
           else
