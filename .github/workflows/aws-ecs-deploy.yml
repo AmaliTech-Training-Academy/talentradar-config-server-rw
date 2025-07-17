@@ -60,11 +60,11 @@ jobs:
           ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY }}"
           ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
           CONTAINER_NAME="${{ secrets.CONTAINER_NAME }}"
-          
+
           # ECS Configuration from secrets
           ECS_CLUSTER="${{ secrets.ECS_CLUSTER }}"
           ECS_SERVICE="${{ secrets.ECS_SERVICE }}"
-          
+
           # Create task definition directory if it doesn't exist
           mkdir -p .aws
 
@@ -82,6 +82,10 @@ jobs:
               executionRoleArn: $execution_role,
               taskRoleArn: $task_role,
               networkMode: "awsvpc",
+              requiresCompatibilities: ["FARGATE"],
+              cpu: "256",
+              memory: "512",
+              tags: [],
               containerDefinitions: [
                 {
                   name: $container_name,
@@ -90,7 +94,6 @@ jobs:
                   portMappings: [
                     {
                       containerPort: 8085,
-                      hostPort: 8085,
                       protocol: "tcp"
                     }
                   ],
@@ -100,8 +103,16 @@ jobs:
                       value: $env_name
                     },
                     {
-                      name: "PORT",
+                      name: "SERVER_PORT",
                       value: "8085"
+                    },
+                    {
+                      name: "SPRING_CLOUD_CONFIG_SERVER_GIT_URI",
+                      value: "https://github.com/AmaliTech-Training-Academy/talentradar-config-repo-rw"
+                    },
+                    {
+                      name: "SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT_LABEL",
+                      value: "main"
                     },
                     {
                       name: "SERVICE_NAME",
@@ -127,10 +138,7 @@ jobs:
                     startPeriod: 60
                   }
                 }
-              ],
-              requiresCompatibilities: ["FARGATE"],
-              cpu: "256",
-              memory: "512"
+              ]
             }' > .aws/task-definition-${ENV_NAME}.json
 
           # Output all variables
@@ -201,7 +209,7 @@ jobs:
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
