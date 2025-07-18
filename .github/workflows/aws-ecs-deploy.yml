@@ -116,6 +116,14 @@ jobs:
                     {
                       name: "SERVICE_NAME",
                       value: "config-server"
+                    },
+                    {
+                      name: "SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME",
+                      value: "git"
+                    },
+                    {
+                      name: "SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD",
+                      value: "${{ secrets.GITHUB_TOKEN }}"
                     }
                   ],
                   logConfiguration: {

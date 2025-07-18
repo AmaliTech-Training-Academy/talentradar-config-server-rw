@@ -8,3 +8,5 @@ spring:
         git:
           uri: ${SPRING_CLOUD_CONFIG_SERVER_GIT_URI}
           default-label: ${SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT_LABEL}
+          username: ${SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME:git}
+          password: ${SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD:}

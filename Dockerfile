@@ -25,6 +25,9 @@ LABEL maintainer="AmaliTech Training Academy" \
 # Set environment variables
 ENV SPRING_PROFILES_ACTIVE=production
 ENV SERVER_PORT=8085
+# This will be overridden at runtime - never store actual tokens in Dockerfile
+ENV SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME=git
+ENV SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD=
 
 # Create a non-root user
 RUN useradd -r -u 1001 -g root configserver
