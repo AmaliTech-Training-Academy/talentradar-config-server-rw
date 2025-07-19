@@ -24,10 +24,14 @@ LABEL maintainer="AmaliTech Training Academy" \
 
 # Set environment variables
 ENV SPRING_PROFILES_ACTIVE=production
+ENV SPRING_CLOUD_CONFIG_SERVER_GIT_URI=https://github.com/AmaliTech-Training-Academy/talentradar-config-repo-rw.git
+ENV SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT_LABEL=development
 ENV SERVER_PORT=8085
-# This will be overridden at runtime - never store actual tokens in Dockerfile
-ENV SPRING_CLOUD_CONFIG_SERVER_GIT_USERNAME=git
-ENV SPRING_CLOUD_CONFIG_SERVER_GIT_PASSWORD=
+# Cache configuration - cache for 5 minutes (300 seconds)
+ENV SPRING_CLOUD_CONFIG_SERVER_GIT_REFRESH_RATE=300
+ENV SPRING_CACHE_CACHE_NAMES=config
+ENV SPRING_CACHE_TYPE=caffeine
+ENV SPRING_CACHE_CAFFEINE_SPEC=maximumSize=1000,expireAfterWrite=300s
 
 # Create a non-root user
 RUN useradd -r -u 1001 -g root configserver

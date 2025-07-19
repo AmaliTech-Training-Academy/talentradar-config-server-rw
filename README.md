@@ -9,6 +9,17 @@ This repository contains the Config Server for the TalentRadar application, whic
 - Spring Cloud Config Server
 - Docker
 
+## ⚠️ Configuration Caching
+
+This config server implements caching to improve performance and reduce load on the remote Git repository:
+
+- **Cache Duration**: 5 minutes (300 seconds)
+- **Cache Type**: Caffeine (in-memory)
+- **Cache Specification**: Maximum 1000 entries, expire after write
+- **Git Refresh Rate**: 300 seconds
+
+**Important**: Configuration changes in the remote repository will not be reflected immediately. There may be up to a 5-minute delay before changes are served to client applications. For immediate configuration updates, restart the config server or wait for the cache to expire.
+
 ## Development
 
 ### Prerequisites
